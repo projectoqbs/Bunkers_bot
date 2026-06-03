@@ -77,7 +77,7 @@ async def call_claude(messages: list, system: str) -> str:
                 "content-type": "application/json",
             },
             json={
-                "model": "claude-sonnet-4-20250514",
+                "model": "claude-haiku-4-5-20251001",
                 "max_tokens": 1000,
                 "system": system,
                 "messages": messages,
