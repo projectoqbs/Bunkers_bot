@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
-GEMINI_API_KEY  = os.environ.get("GEMINI_API_KEY", "")
+GROQ_API_KEY   = os.environ.get("GROQ_API_KEY", "")
 
 SYSTEM_PROMPT = """Eres el Agente Bunkers QBS, asistente operativo de CI Quality Bunkers Supply S.A.S para gestión de suministro de combustible a buques en Colombia.
 
@@ -65,35 +65,37 @@ def get_session(user_id):
 def clear_session(user_id):
     user_sessions[user_id] = []
 
-async def call_gemini(history: list, system: str) -> str:
-    contents = []
+async def call_groq(history: list, system: str) -> str:
+    messages = [{"role": "system", "content": system}]
     for msg in history:
-        role = "user" if msg["role"] == "user" else "model"
-        contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+        messages.append({"role": msg["role"], "content": msg["content"]})
 
     payload = {
-        "system_instruction": {"parts": [{"text": system}]},
-        "contents": contents,
-        "generationConfig": {
-            "maxOutputTokens": 1000,
-            "temperature": 0.7
-        }
+        "model": "llama-3.3-70b-versatile",
+        "messages": messages,
+        "max_tokens": 1000,
+        "temperature": 0.7
     }
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key={GEMINI_API_KEY}"
-
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, json=payload)
+        resp = await client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json=payload
+        )
         data = resp.json()
 
         if resp.status_code == 429:
             raise Exception("RATE_LIMIT")
 
         if resp.status_code != 200:
-            logger.error(f"Gemini error {resp.status_code}: {data}")
-            raise Exception(f"Gemini API error: {resp.status_code}")
+            logger.error(f"Groq error {resp.status_code}: {data}")
+            raise Exception(f"Groq API error: {resp.status_code}")
 
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        return data["choices"][0]["message"]["content"]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -154,7 +156,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session.append({"role": "user", "content": text})
 
     try:
-        response = await call_gemini(session, SYSTEM_PROMPT)
+        response = await call_groq(session, SYSTEM_PROMPT)
         session.append({"role": "assistant", "content": response})
 
         if "REGISTRO_CONFIRMADO" in response:
@@ -183,10 +185,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response, parse_mode="Markdown")
 
     except Exception as e:
-        logger.error(f"Error calling Gemini: {e}")
+        logger.error(f"Error calling Groq: {e}")
         if "RATE_LIMIT" in str(e):
             await update.message.reply_text(
-                "⏳ El servicio está ocupado. Espera 30 segundos e intenta de nuevo."
+                "⏳ El servicio está ocupado. Espera unos segundos e intenta de nuevo."
             )
         else:
             await update.message.reply_text(
@@ -197,7 +199,7 @@ def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    logger.info("Bot Bunkers QBS iniciado con Gemini Flash Lite...")
+    logger.info("Bot Bunkers QBS iniciado con Groq...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
