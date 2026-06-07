@@ -328,7 +328,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Error registro: {e}")
 
-        await update.message.reply_text(response, parse_mode="Markdown")
+        # Limpiar caracteres markdown que pueden causar errores
+        safe_response = response.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
+        await update.message.reply_text(safe_response)
 
     except Exception as e:
         logger.error(f"Error: {e}")
