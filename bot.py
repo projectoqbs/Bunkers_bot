@@ -16,11 +16,24 @@ GROQ_API_KEY   = os.environ.get("GROQ_API_KEY", "")
 GOOGLE_CREDS   = os.environ.get("GOOGLE_CREDS", "")
 SHEET_ID       = "1cKS-P5T9hO3Ayv78gAGC8i_3JhOmDxlothPfxiWToCY"
 
-# Estructura de columnas
 HEADERS = [
     "FECHA REGISTRO", "MN", "ETA", "AGENCIA", "IMO", "BANDERA",
     "MT VLSO", "MT HSFO", "MT MGO", "PUERTO", "HORAS OP.", "CIUDAD", "ESTADO"
 ]
+
+CAMPO_MAP = {
+    "1": ("ETA",       "eta"),
+    "2": ("AGENCIA",   "agencia"),
+    "3": ("IMO",       "imo"),
+    "4": ("BANDERA",   "bandera"),
+    "5": ("MT VLSO",   "mt_vlso"),
+    "6": ("MT HSFO",   "mt_hsfo"),
+    "7": ("MT MGO",    "mt_mgo"),
+    "8": ("PUERTO",    "puerto"),
+    "9": ("HORAS OP.", "horas_op"),
+    "10":("CIUDAD",    "ciudad"),
+    "11":("ESTADO",    "estado"),
+}
 
 SYSTEM_PROMPT = """Eres el Agente Bunkers QBS, asistente operativo de CI Quality Bunkers Supply S.A.S para gestión de suministro de combustible a buques en Colombia.
 
@@ -46,32 +59,36 @@ REGLAS:
 - Cuando tengas todos los datos principales muestra EXACTAMENTE este formato:
 
 RESUMEN:
-🚢 Buque: [NOMBRE]
-📅 ETA: [ETA]
-🏳️ Bandera: [BANDERA]
-🔢 IMO: [IMO]
-🏢 Agencia: [AGENCIA]
-⛽ MT VLSO: [MT_VLSO o "—"]
-⛽ MT HSFO: [MT_HSFO o "—"]
-⛽ MT MGO: [MT_MGO o "—"]
-⚓ Puerto: [PUERTO]
-⏱️ Horas op.: [HORAS_OP o "—"]
-📍 Ciudad: [CIUDAD]
+Buque: [NOMBRE]
+ETA: [ETA]
+Bandera: [BANDERA]
+IMO: [IMO]
+Agencia: [AGENCIA]
+MT VLSO: [MT_VLSO o ninguno]
+MT HSFO: [MT_HSFO o ninguno]
+MT MGO: [MT_MGO o ninguno]
+Puerto: [PUERTO]
+Horas op.: [HORAS_OP o ninguno]
+Ciudad: [CIUDAD]
 
-¿Confirmas el registro? Responde SÍ para registrar o dime qué corregir.
+Confirmas el registro? Responde SI para registrar o dime que corregir.
 
-CUANDO EL USUARIO CONFIRME con sí/confirmo/ok/correcto responde EXACTAMENTE:
+CUANDO EL USUARIO CONFIRME con si/confirmo/ok/correcto responde EXACTAMENTE:
 REGISTRO_CONFIRMADO
 JSON:{"buque":"X","eta":"X","agencia":"X","imo":"X","bandera":"X","mt_vlso":"X","mt_hsfo":"X","mt_mgo":"X","puerto":"X","horas_op":"X","ciudad":"X"}
 
 Comandos especiales:
-- "listar" → muestra buques registrados en la sesión
-- "ayuda" → explica el flujo
-- "nuevo" → inicia nuevo registro
+- listar: muestra buques registrados en la sesion
+- ayuda: explica el flujo
+- nuevo: inicia nuevo registro
 """
 
 user_sessions    = {}
 registros_sesion = []
+
+# Estados para edicion paso a paso
+edit_states = {}
+# edit_states[uid] = {"step": "buque"|"campo"|"valor", "buque": "...", "campo_num": "..."}
 
 def get_session(uid):
     if uid not in user_sessions:
@@ -92,7 +109,6 @@ def get_sheet():
     sh     = client.open_by_key(SHEET_ID)
     try:
         ws = sh.worksheet("BUQUES")
-        # Verificar si los headers están actualizados
         current_headers = ws.row_values(1)
         if current_headers != HEADERS:
             ws.clear()
@@ -114,18 +130,15 @@ def _format_header(ws):
 def registrar_en_sheet(data):
     try:
         ws = get_sheet()
+        def v(k):
+            val = data.get(k, "")
+            return val if val and val not in ["X", "0", "ninguno", "none", "-"] else ""
         fila = [
             datetime.now().strftime("%d/%m/%Y %H:%M"),
             data.get("buque", ""),
-            data.get("eta", ""),
-            data.get("agencia", ""),
-            data.get("imo", ""),
-            data.get("bandera", ""),
-            data.get("mt_vlso", "") if data.get("mt_vlso", "") not in ["X", "0", ""] else "",
-            data.get("mt_hsfo", "") if data.get("mt_hsfo", "") not in ["X", "0", ""] else "",
-            data.get("mt_mgo",  "") if data.get("mt_mgo",  "") not in ["X", "0", ""] else "",
-            data.get("puerto", ""),
-            data.get("horas_op", "") if data.get("horas_op", "") not in ["X", "0", ""] else "",
+            v("eta"), v("agencia"), v("imo"), v("bandera"),
+            v("mt_vlso"), v("mt_hsfo"), v("mt_mgo"),
+            v("puerto"), v("horas_op"),
             data.get("ciudad", "MALAMBO"),
             "PENDIENTE"
         ]
@@ -139,65 +152,64 @@ def registrar_en_sheet(data):
         logger.error(f"Error Sheets: {e}")
         return False, 0
 
-def editar_en_sheet(nombre_buque, campo, nuevo_valor):
+def buscar_buque_en_sheet(nombre_buque):
+    """Busca el buque mas reciente y devuelve (row_idx, fila_data) o (None, None)"""
     try:
         ws    = get_sheet()
         datos = ws.get_all_values()
         headers = datos[0]
-        
-        # Mapeo de nombres amigables a columnas
-        campo_map = {
-            "eta": "ETA", "agencia": "AGENCIA", "imo": "IMO",
-            "bandera": "BANDERA", "vlso": "MT VLSO", "hsfo": "MT HSFO",
-            "mgo": "MT MGO", "puerto": "PUERTO", "horas": "HORAS OP.",
-            "ciudad": "CIUDAD", "estado": "ESTADO"
-        }
-        col_name = campo_map.get(campo.lower(), campo.upper())
-        
+        for i in range(len(datos)-1, 0, -1):
+            if datos[i][1].upper() == nombre_buque.upper():
+                fila_dict = dict(zip(headers, datos[i]))
+                return i + 1, fila_dict
+        return None, None
+    except Exception as e:
+        logger.error(f"Error buscando buque: {e}")
+        return None, None
+
+def editar_campo_en_sheet(nombre_buque, col_name, nuevo_valor):
+    try:
+        ws    = get_sheet()
+        datos = ws.get_all_values()
+        headers = datos[0]
         if col_name not in headers:
             return False, f"Campo '{col_name}' no encontrado"
-        
         col_idx = headers.index(col_name) + 1
-        
-        # Buscar fila del buque (más reciente)
         row_idx = None
         for i in range(len(datos)-1, 0, -1):
             if datos[i][1].upper() == nombre_buque.upper():
                 row_idx = i + 1
                 break
-        
         if not row_idx:
             return False, f"Buque '{nombre_buque}' no encontrado"
-        
         ws.update_cell(row_idx, col_idx, nuevo_valor)
-        return True, f"✅ Actualizado: {col_name} = {nuevo_valor}"
+        return True, "ok"
     except Exception as e:
         logger.error(f"Error editando: {e}")
         return False, str(e)
 
 def generar_resumen_registro(data):
-    def val(k):
-        v = data.get(k, "")
-        return v if v and v not in ["X", "0"] else "—"
-    
+    def v(k):
+        val = data.get(k, "")
+        return val if val and val not in ["X", "0", "ninguno", "none", "-"] else "—"
     return (
-        f"📋 *REGISTRO GUARDADO EN GOOGLE SHEETS*\n"
+        f"REGISTRO GUARDADO EN GOOGLE SHEETS\n"
         f"{'─'*32}\n"
-        f"🚢 *Buque:* {val('buque')}\n"
-        f"📅 *ETA:* {val('eta')}\n"
-        f"🏳️ *Bandera:* {val('bandera')}\n"
-        f"🔢 *IMO:* {val('imo')}\n"
-        f"🏢 *Agencia:* {val('agencia')}\n"
-        f"⛽ *MT VLSO:* {val('mt_vlso')}\n"
-        f"⛽ *MT HSFO:* {val('mt_hsfo')}\n"
-        f"⛽ *MT MGO:* {val('mt_mgo')}\n"
-        f"⚓ *Puerto:* {val('puerto')}\n"
-        f"⏱️ *Horas op.:* {val('horas_op')}\n"
-        f"📍 *Ciudad:* {val('ciudad')}\n"
-        f"📌 *Estado:* PENDIENTE\n"
-        f"🕐 *Fecha:* {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+        f"Buque: {v('buque')}\n"
+        f"ETA: {v('eta')}\n"
+        f"Bandera: {v('bandera')}\n"
+        f"IMO: {v('imo')}\n"
+        f"Agencia: {v('agencia')}\n"
+        f"MT VLSO: {v('mt_vlso')}\n"
+        f"MT HSFO: {v('mt_hsfo')}\n"
+        f"MT MGO: {v('mt_mgo')}\n"
+        f"Puerto: {v('puerto')}\n"
+        f"Horas op.: {v('horas_op')}\n"
+        f"Ciudad: {v('ciudad')}\n"
+        f"Estado: PENDIENTE\n"
+        f"Fecha: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
         f"{'─'*32}\n"
-        f"✅ *Guardado exitosamente*"
+        f"Guardado exitosamente"
     )
 
 async def call_groq(history, system):
@@ -214,92 +226,171 @@ async def call_groq(history, system):
         if resp.status_code != 200: raise Exception(f"Groq error: {resp.status_code}")
         return resp.json()["choices"][0]["message"]["content"]
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    clear_session(update.effective_user.id)
+def menu_principal():
     keyboard = [
-        [KeyboardButton("🚢 Nuevo buque"),   KeyboardButton("📋 Listar buques")],
-        [KeyboardButton("✏️ Editar registro"), KeyboardButton("🔄 Limpiar sesión")],
-        [KeyboardButton("❓ Ayuda")],
+        [KeyboardButton("Nuevo buque"),    KeyboardButton("Listar buques")],
+        [KeyboardButton("Editar registro"), KeyboardButton("Limpiar sesion")],
+        [KeyboardButton("Ayuda")],
     ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def menu_campos():
+    keyboard = [
+        [KeyboardButton("1. ETA"),        KeyboardButton("2. Agencia")],
+        [KeyboardButton("3. IMO"),         KeyboardButton("4. Bandera")],
+        [KeyboardButton("5. MT VLSO"),    KeyboardButton("6. MT HSFO")],
+        [KeyboardButton("7. MT MGO"),      KeyboardButton("8. Puerto")],
+        [KeyboardButton("9. Horas op."),  KeyboardButton("10. Ciudad")],
+        [KeyboardButton("11. Estado"),    KeyboardButton("Cancelar edicion")],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    clear_session(uid)
+    edit_states.pop(uid, None)
     await update.message.reply_text(
-        "👋 *Bienvenido al Agente Bunkers QBS*\n\n"
+        "Bienvenido al Agente Bunkers QBS\n\n"
         "Soy tu asistente para registrar operaciones de suministro de combustible.\n\n"
-        "📝 Escríbeme los datos del buque para comenzar.",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        "Escribeme los datos del buque para comenzar.",
+        reply_markup=menu_principal()
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid     = update.effective_user.id
-    text    = update.message.text.strip()
-    session = get_session(uid)
+    uid  = update.effective_user.id
+    text = update.message.text.strip()
 
-    if text in ["🔄 Limpiar sesión", "limpiar"]:
-        clear_session(uid)
-        await update.message.reply_text("✅ Sesión limpiada.")
-        return
+    # ── FLUJO DE EDICION PASO A PASO ────────────────────────────
+    if uid in edit_states:
+        estado = edit_states[uid]
 
-    if text in ["📋 Listar buques", "listar"]:
-        if not registros_sesion:
-            await update.message.reply_text("📋 No hay buques registrados aún.")
-        else:
-            lista = "📋 *Buques registrados esta sesión:*\n\n"
-            for i, r in enumerate(registros_sesion, 1):
-                lista += f"{i}. 🚢 *{r.get('buque','?')}* — IMO {r.get('imo','?')} — {r.get('puerto','?')}\n"
-            await update.message.reply_text(lista, parse_mode="Markdown")
-        return
+        if text == "Cancelar edicion":
+            edit_states.pop(uid, None)
+            await update.message.reply_text("Edicion cancelada.", reply_markup=menu_principal())
+            return
 
-    if text in ["🚢 Nuevo buque", "nuevo"]:
-        clear_session(uid)
-        await update.message.reply_text("🚢 Cuéntame los datos del buque:")
-        return
+        # Paso 1: recibir nombre del buque
+        if estado["step"] == "buque":
+            row_idx, fila = buscar_buque_en_sheet(text)
+            if not row_idx:
+                await update.message.reply_text(
+                    f"No encontre el buque '{text}' en Google Sheets.\n"
+                    f"Verifique el nombre exacto e intente de nuevo, o escriba 'Cancelar edicion'."
+                )
+                return
+            edit_states[uid]["buque"]   = text
+            edit_states[uid]["row_idx"] = row_idx
+            edit_states[uid]["step"]    = "campo"
 
-    if text in ["✏️ Editar registro", "editar"]:
-        await update.message.reply_text(
-            "✏️ *Editar registro*\n\n"
-            "Escríbeme en este formato:\n"
-            "_editar [NOMBRE BUQUE] / [CAMPO] / [NUEVO VALOR]_\n\n"
-            "Campos disponibles: eta, agencia, bandera, vlso, hsfo, mgo, puerto, horas, ciudad, estado\n\n"
-            "Ejemplo:\n"
-            "_editar CTI QUEEN / vlso / 700_",
-            parse_mode="Markdown"
-        )
-        return
+            # Mostrar datos actuales
+            resumen = (
+                f"Buque encontrado: {fila.get('MN','')}\n"
+                f"{'─'*28}\n"
+                f"1.  ETA:       {fila.get('ETA','—')}\n"
+                f"2.  Agencia:   {fila.get('AGENCIA','—')}\n"
+                f"3.  IMO:       {fila.get('IMO','—')}\n"
+                f"4.  Bandera:   {fila.get('BANDERA','—')}\n"
+                f"5.  MT VLSO:   {fila.get('MT VLSO','—')}\n"
+                f"6.  MT HSFO:   {fila.get('MT HSFO','—')}\n"
+                f"7.  MT MGO:    {fila.get('MT MGO','—')}\n"
+                f"8.  Puerto:    {fila.get('PUERTO','—')}\n"
+                f"9.  Horas op.: {fila.get('HORAS OP.','—')}\n"
+                f"10. Ciudad:    {fila.get('CIUDAD','—')}\n"
+                f"11. Estado:    {fila.get('ESTADO','—')}\n"
+                f"{'─'*28}\n"
+                f"Que campo desea editar? Toque el boton o escriba el numero."
+            )
+            await update.message.reply_text(resumen, reply_markup=menu_campos())
+            return
 
-    if text in ["❓ Ayuda", "ayuda"]:
-        await update.message.reply_text(
-            "ℹ️ *Cómo funciona:*\n\n"
-            "1️⃣ Escríbeme los datos del buque\n"
-            "2️⃣ Te pregunto lo que falte\n"
-            "3️⃣ Te muestro resumen para confirmar\n"
-            "4️⃣ Al confirmar se guarda en Google Sheets\n"
-            "5️⃣ Te muestro cómo quedó el registro\n\n"
-            "✏️ Para editar: _editar CTI QUEEN / vlso / 700_\n\n"
-            "💡 Ejemplo registro:\n"
-            "_CTI QUEEN, IMO 9240079, Panamá, 650 MT VLSO, SPRB, NAVES, ETA 10/06_",
-            parse_mode="Markdown"
-        )
-        return
+        # Paso 2: recibir campo a editar
+        if estado["step"] == "campo":
+            # Aceptar "N. Nombre" o solo "N"
+            num = text.split(".")[0].strip()
+            if num not in CAMPO_MAP:
+                await update.message.reply_text(
+                    "Por favor seleccione un campo del menu o escriba el numero (1-11).",
+                    reply_markup=menu_campos()
+                )
+                return
+            col_name, _ = CAMPO_MAP[num]
+            edit_states[uid]["campo_num"] = num
+            edit_states[uid]["col_name"]  = col_name
+            edit_states[uid]["step"]      = "valor"
+            await update.message.reply_text(
+                f"Campo seleccionado: {col_name}\n\nEscriba el nuevo valor:",
+                reply_markup=ReplyKeyboardMarkup([["Cancelar edicion"]], resize_keyboard=True)
+            )
+            return
 
-    # Detectar comando editar
-    if text.lower().startswith("editar ") and "/" in text:
-        partes = text[7:].split("/")
-        if len(partes) == 3:
-            nombre   = partes[0].strip()
-            campo    = partes[1].strip()
-            nuevo_val = partes[2].strip()
-            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-            ok, msg = editar_en_sheet(nombre, campo, nuevo_val)
-            await update.message.reply_text(msg if ok else f"⚠️ {msg}")
+        # Paso 3: recibir nuevo valor
+        if estado["step"] == "valor":
+            buque    = edit_states[uid]["buque"]
+            col_name = edit_states[uid]["col_name"]
+            ok, msg  = editar_campo_en_sheet(buque, col_name, text)
+            edit_states.pop(uid, None)
             if ok:
                 await update.message.reply_text(
-                    f"🔗 Ver Google Sheets:\nhttps://docs.google.com/spreadsheets/d/{SHEET_ID}",
-                    disable_web_page_preview=True
+                    f"Actualizado exitosamente\n\n"
+                    f"Buque: {buque}\n"
+                    f"Campo: {col_name}\n"
+                    f"Nuevo valor: {text}\n\n"
+                    f"Ver Google Sheets:\nhttps://docs.google.com/spreadsheets/d/{SHEET_ID}",
+                    reply_markup=menu_principal()
                 )
-        else:
-            await update.message.reply_text("⚠️ Formato incorrecto. Usa: _editar NOMBRE / campo / valor_", parse_mode="Markdown")
+            else:
+                await update.message.reply_text(f"Error al actualizar: {msg}", reply_markup=menu_principal())
+            return
+
+    # ── COMANDOS NORMALES ────────────────────────────────────────
+    session = get_session(uid)
+
+    if text in ["Limpiar sesion", "limpiar"]:
+        clear_session(uid)
+        await update.message.reply_text("Sesion limpiada.", reply_markup=menu_principal())
         return
 
+    if text in ["Listar buques", "listar"]:
+        if not registros_sesion:
+            await update.message.reply_text("No hay buques registrados en esta sesion.")
+        else:
+            lista = "Buques registrados esta sesion:\n\n"
+            for i, r in enumerate(registros_sesion, 1):
+                lista += f"{i}. {r.get('buque','?')} — IMO {r.get('imo','?')} — {r.get('puerto','?')}\n"
+            await update.message.reply_text(lista)
+        return
+
+    if text in ["Nuevo buque", "nuevo"]:
+        clear_session(uid)
+        await update.message.reply_text("Cuentame los datos del buque:", reply_markup=menu_principal())
+        return
+
+    if text in ["Editar registro", "editar"]:
+        clear_session(uid)
+        edit_states[uid] = {"step": "buque"}
+        await update.message.reply_text(
+            "Editar registro\n\n"
+            "Escriba el nombre exacto del buque que desea editar:",
+            reply_markup=ReplyKeyboardMarkup([["Cancelar edicion"]], resize_keyboard=True)
+        )
+        return
+
+    if text in ["Ayuda", "ayuda"]:
+        await update.message.reply_text(
+            "Como funciona:\n\n"
+            "1. Escribeme los datos del buque\n"
+            "2. Te pregunto lo que falte\n"
+            "3. Te muestro resumen para confirmar\n"
+            "4. Al confirmar se guarda en Google Sheets\n"
+            "5. Te muestro como quedo el registro\n\n"
+            "Para editar: boton 'Editar registro'\n\n"
+            "Ejemplo:\n"
+            "CTI QUEEN, IMO 9240079, Panama, 650 MT VLSO, SPRB, NAVES, ETA 10/06, 96 horas",
+            reply_markup=menu_principal()
+        )
+        return
+
+    # ── CONVERSACION CON IA ──────────────────────────────────────
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     session.append({"role": "user", "content": text})
 
@@ -312,32 +403,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 json_start = response.index("JSON:") + 5
                 json_str   = response[json_start:].strip()
                 data       = json.loads(json_str[:json_str.index("}")+1])
-                await update.message.reply_text("⏳ Guardando en Google Sheets...")
+                await update.message.reply_text("Guardando en Google Sheets...")
                 ok, row_num = registrar_en_sheet(data)
                 if ok:
                     registros_sesion.append(data)
                     clear_session(uid)
-                    await update.message.reply_text(generar_resumen_registro(data), parse_mode="Markdown")
+                    await update.message.reply_text(generar_resumen_registro(data))
                     await update.message.reply_text(
-                        f"🔗 Ver Google Sheets:\nhttps://docs.google.com/spreadsheets/d/{SHEET_ID}\n\n¿Hay otro buque?",
-                        disable_web_page_preview=True
+                        f"Ver Google Sheets:\nhttps://docs.google.com/spreadsheets/d/{SHEET_ID}\n\n"
+                        f"Hay otro buque que registrar?",
+                        reply_markup=menu_principal()
                     )
                 else:
-                    await update.message.reply_text("⚠️ No se pudo guardar. Intenta de nuevo.")
+                    await update.message.reply_text("No se pudo guardar. Intenta de nuevo.")
                 return
             except Exception as e:
                 logger.error(f"Error registro: {e}")
 
-        # Limpiar caracteres markdown que pueden causar errores
-        safe_response = response.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
-        await update.message.reply_text(safe_response)
+        # Limpiar markdown de la respuesta
+        safe = response.replace("*","").replace("_","").replace("`","").replace("[","").replace("]","")
+        await update.message.reply_text(safe)
 
     except Exception as e:
         logger.error(f"Error: {e}")
         if "RATE_LIMIT" in str(e):
-            await update.message.reply_text("⏳ Espera unos segundos e intenta de nuevo.")
+            await update.message.reply_text("Espera unos segundos e intenta de nuevo.")
         else:
-            await update.message.reply_text("⚠️ Error de conexión. Intenta de nuevo.")
+            await update.message.reply_text("Error de conexion. Intenta de nuevo.")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
