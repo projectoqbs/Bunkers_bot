@@ -320,14 +320,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Estado:   {fila.get('ESTADO','—')}\n"
                 f"{'─'*28}\n"
                 f"ATENCION: Esta accion eliminara este registro permanentemente.\n"
-                f"Confirma la eliminacion?"
+                f"Presione SI ELIMINAR para confirmar o Cancelar para salir."
             )
-            await update.message.reply_text(resumen, reply_markup=ReplyKeyboardMarkup(
-                [[KeyboardButton("SI, ELIMINAR"), KeyboardButton("Cancelar")]], resize_keyboard=True
-            ))
+            confirmar_keyboard = ReplyKeyboardMarkup(
+                [[KeyboardButton("SI ELIMINAR"), KeyboardButton("Cancelar")]],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+            await update.message.reply_text(resumen, reply_markup=confirmar_keyboard)
             return
         if estado["step"] == "confirmar":
-            if text.upper() in ["SI, ELIMINAR", "SI", "SÍ", "YES", "CONFIRMO", "OK"]:
+            if text.upper() in ["SI ELIMINAR", "SI, ELIMINAR", "SI", "SÍ", "YES", "CONFIRMO", "OK"]:
                 buque = delete_states[uid]["buque"]
                 delete_states.pop(uid, None)
                 ok, msg = eliminar_buque_en_sheet(buque)
