@@ -87,8 +87,10 @@ user_sessions    = {}
 registros_sesion = []
 
 # Estados para edicion paso a paso
-edit_states = {}
-# edit_states[uid] = {"step": "buque"|"campo"|"valor", "buque": "...", "campo_num": "..."}
+edit_states   = {}
+delete_states = {}
+# edit_states[uid]   = {"step": "buque"|"campo"|"valor", "buque": "...", "campo_num": "..."}
+# delete_states[uid] = {"step": "buque"|"confirmar", "buque": "...", "fila": {...}}
 
 def get_session(uid):
     if uid not in user_sessions:
@@ -212,6 +214,23 @@ def generar_resumen_registro(data):
         f"Guardado exitosamente"
     )
 
+def eliminar_buque_en_sheet(nombre_buque):
+    try:
+        ws    = get_sheet()
+        datos = ws.get_all_values()
+        row_idx = None
+        for i in range(len(datos)-1, 0, -1):
+            if datos[i][1].upper() == nombre_buque.upper():
+                row_idx = i + 1
+                break
+        if not row_idx:
+            return False, f"Buque '{nombre_buque}' no encontrado"
+        ws.delete_rows(row_idx)
+        return True, "ok"
+    except Exception as e:
+        logger.error(f"Error eliminando: {e}")
+        return False, str(e)
+
 async def call_groq(history, system):
     messages = [{"role": "system", "content": system}]
     for m in history:
@@ -228,9 +247,9 @@ async def call_groq(history, system):
 
 def menu_principal():
     keyboard = [
-        [KeyboardButton("Nuevo buque"),    KeyboardButton("Listar buques")],
-        [KeyboardButton("Editar registro"), KeyboardButton("Limpiar sesion")],
-        [KeyboardButton("Ayuda")],
+        [KeyboardButton("Nuevo buque"),     KeyboardButton("Listar buques")],
+        [KeyboardButton("Editar registro"), KeyboardButton("Eliminar buque")],
+        [KeyboardButton("Limpiar sesion"),  KeyboardButton("Ayuda")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -260,7 +279,71 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid  = update.effective_user.id
     text = update.message.text.strip()
 
-    # ── FLUJO DE EDICION PASO A PASO ────────────────────────────
+    # ── FLUJO DE ELIMINACION PASO A PASO ────────────────────────
+    if uid in delete_states:
+        estado = delete_states[uid]
+
+        if text in ["Cancelar", "cancelar", "Cancelar edicion"]:
+            delete_states.pop(uid, None)
+            await update.message.reply_text("Operacion cancelada.", reply_markup=menu_principal())
+            return
+
+        # Paso 1: recibir nombre del buque
+        if estado["step"] == "buque":
+            row_idx, fila = buscar_buque_en_sheet(text)
+            if not row_idx:
+                await update.message.reply_text(
+                    f"No encontre el buque '{text}' en Google Sheets.\n"
+                    f"Verifique el nombre e intente de nuevo o escriba 'Cancelar'."
+                )
+                return
+            delete_states[uid]["buque"] = text
+            delete_states[uid]["fila"]  = fila
+            delete_states[uid]["step"]  = "confirmar"
+
+            resumen = (
+                f"Buque encontrado:\n"
+                f"{'─'*28}\n"
+                f"MN:      {fila.get('MN','')}\n"
+                f"ETA:     {fila.get('ETA','—')}\n"
+                f"IMO:     {fila.get('IMO','—')}\n"
+                f"Puerto:  {fila.get('PUERTO','—')}\n"
+                f"MT VLSO: {fila.get('MT VLSO','—')}\n"
+                f"MT HSFO: {fila.get('MT HSFO','—')}\n"
+                f"MT MGO:  {fila.get('MT MGO','—')}\n"
+                f"Estado:  {fila.get('ESTADO','—')}\n"
+                f"{'─'*28}\n"
+                f"ATENCION: Esta accion eliminara este registro permanentemente.\n"
+                f"Confirma la eliminacion?"
+            )
+            keyboard = ReplyKeyboardMarkup(
+                [[KeyboardButton("SI, ELIMINAR"), KeyboardButton("Cancelar")]],
+                resize_keyboard=True
+            )
+            await update.message.reply_text(resumen, reply_markup=keyboard)
+            return
+
+        # Paso 2: confirmar eliminacion
+        if estado["step"] == "confirmar":
+            if text in ["SI, ELIMINAR", "si, eliminar", "SI"]:
+                buque = delete_states[uid]["buque"]
+                delete_states.pop(uid, None)
+                ok, msg = eliminar_buque_en_sheet(buque)
+                if ok:
+                    await update.message.reply_text(
+                        f"Registro eliminado exitosamente\n\n"
+                        f"Buque: {buque}\n\n"
+                        f"Ver Google Sheets:\nhttps://docs.google.com/spreadsheets/d/{SHEET_ID}",
+                        reply_markup=menu_principal()
+                    )
+                else:
+                    await update.message.reply_text(f"Error al eliminar: {msg}", reply_markup=menu_principal())
+            else:
+                delete_states.pop(uid, None)
+                await update.message.reply_text("Eliminacion cancelada.", reply_markup=menu_principal())
+            return
+
+
     if uid in edit_states:
         estado = edit_states[uid]
 
@@ -363,6 +446,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text in ["Nuevo buque", "nuevo"]:
         clear_session(uid)
         await update.message.reply_text("Cuentame los datos del buque:", reply_markup=menu_principal())
+        return
+
+    if text in ["Eliminar buque", "eliminar"]:
+        clear_session(uid)
+        delete_states[uid] = {"step": "buque"}
+        await update.message.reply_text(
+            "Eliminar buque\n\n"
+            "Escriba el nombre exacto del buque que desea eliminar:",
+            reply_markup=ReplyKeyboardMarkup([["Cancelar"]], resize_keyboard=True)
+        )
         return
 
     if text in ["Editar registro", "editar"]:
