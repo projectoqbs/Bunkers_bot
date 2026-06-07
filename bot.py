@@ -327,7 +327,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ))
             return
         if estado["step"] == "confirmar":
-            if text == "SI, ELIMINAR":
+            if text.upper() in ["SI, ELIMINAR", "SI", "SÍ", "YES", "CONFIRMO", "OK"]:
                 buque = delete_states[uid]["buque"]
                 delete_states.pop(uid, None)
                 ok, msg = eliminar_buque_en_sheet(buque)
