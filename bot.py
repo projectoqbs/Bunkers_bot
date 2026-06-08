@@ -201,12 +201,12 @@ def generar_imagen_tabla():
             return None, "No hay buques registrados."
 
         # Escala 2x para mejor calidad
-        SCALE      = 2
-        FONT_SIZE  = 16 * SCALE
-        PAD_X      = 16 * SCALE
-        PAD_Y      = 11 * SCALE
+        SCALE      = 3
+        FONT_SIZE  = 28 * SCALE
+        PAD_X      = 20 * SCALE
+        PAD_Y      = 14 * SCALE
         ROW_H      = FONT_SIZE + PAD_Y * 2
-        MARGIN     = 28 * SCALE
+        MARGIN     = 32 * SCALE
 
         # Calcular anchos de columna basado en contenido
         col_widths = []
@@ -230,7 +230,7 @@ def generar_imagen_tabla():
         try:
             font       = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE)
             font_bold  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
-            font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE + 4)
+            font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE + 8)
         except:
             font = font_bold = font_title = ImageFont.load_default()
 
