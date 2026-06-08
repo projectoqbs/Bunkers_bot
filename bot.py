@@ -96,8 +96,8 @@ def get_sheet():
     sh     = client.open_by_key(SHEET_ID)
     try:
         ws = sh.worksheet("BUQUES")
-        if ws.row_values(1) != HEADERS:
-            ws.clear()
+        # Solo agregar headers si la hoja esta completamente vacia
+        if not ws.row_values(1):
             ws.append_row(HEADERS)
             _fmt(ws)
     except:
