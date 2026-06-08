@@ -534,10 +534,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
         buf, error = generar_imagen_tabla()
         if buf:
-            await update.message.reply_photo(
-                photo=buf,
-                caption=f"Buques registrados en Google Sheets\nVer: https://docs.google.com/spreadsheets/d/{SHEET_ID}"
-            )
+            await update.message.reply_photo(photo=buf)
         else:
             await update.message.reply_text(error or "No se pudo generar la imagen.")
         return
