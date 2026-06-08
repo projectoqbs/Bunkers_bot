@@ -188,7 +188,7 @@ def generar_imagen_tabla():
         if len(datos) <= 1:
             return None, "No hay buques registrados."
 
-        cols_mostrar = ["MN", "ETA", "AGENCIA", "ETD", "MT VLSO", "MT HSFO", "MT MGO", "PUERTO", "HORAS OP.", "CONTRATO"]
+        cols_mostrar = ["MN", "ETA", "AGENCIA", "ETD", "MT VLSO", "MT HSFO", "MT MGO", "PUERTO", "HORAS OP."]
         headers = datos[0]
         indices = [headers.index(c) for c in cols_mostrar if c in headers]
 
@@ -202,11 +202,11 @@ def generar_imagen_tabla():
 
         # Escala 2x para mejor calidad
         SCALE      = 2
-        FONT_SIZE  = 13 * SCALE
-        PAD_X      = 14 * SCALE
-        PAD_Y      = 9  * SCALE
+        FONT_SIZE  = 16 * SCALE
+        PAD_X      = 16 * SCALE
+        PAD_Y      = 11 * SCALE
         ROW_H      = FONT_SIZE + PAD_Y * 2
-        MARGIN     = 24 * SCALE
+        MARGIN     = 28 * SCALE
 
         # Calcular anchos de columna basado en contenido
         col_widths = []
