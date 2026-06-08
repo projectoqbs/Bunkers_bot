@@ -46,24 +46,27 @@ SYSTEM_PROMPT = """Eres el Agente Bunkers QBS, asistente operativo de CI Quality
 Tu trabajo es recopilar datos de operaciones de bunkering conversacionalmente.
 
 DATOS QUE NECESITAS:
-- NOMBRE_BUQUE (obligatorio)
-- IMO (obligatorio)
-- BANDERA
-- ETA (fecha estimada llegada)
-- AGENCIA
-- ETD (fecha estimada salida, puede ser vacio)
-- MT_VLSO (MT de VLSFO 380, puede ser vacio)
-- MT_HSFO (MT de HSFO, puede ser vacio)
-- MT_MGO (MT de MGO, puede ser vacio)
-- PUERTO (SPRB / PALERMO / SPSM)
-- HORAS_OP (horas estimadas de operacion, puede ser vacio)
-- CONTRATO (numero o nombre del contrato, puede ser vacio)
+- NOMBRE_BUQUE (unico obligatorio)
+- IMO (opcional)
+- BANDERA (opcional)
+- ETA (opcional)
+- AGENCIA (opcional)
+- ETD (opcional)
+- MT_VLSO (opcional)
+- MT_HSFO (opcional)
+- MT_MGO (opcional)
+- PUERTO (opcional, SPRB / PALERMO / SPSM)
+- HORAS_OP (opcional)
+- CONTRATO (opcional)
 - CIUDAD_OPERACION (defecto: MALAMBO)
 
 REGLAS:
 - Habla en espanol, tono profesional y directo
 - Si el usuario da varios datos juntos, extraelos todos de una vez
-- Al menos uno de MT_VLSO, MT_HSFO o MT_MGO debe tener valor
+- El UNICO campo obligatorio es el NOMBRE_BUQUE
+- Si solo da el nombre del buque, procede con los demas vacios
+- No insistas en pedir datos opcionales si el usuario no los proporciona
+- Cuando tengas el nombre del buque muestra el resumen con lo que tenga y pregunta si confirma
 - Cuando tengas todos los datos principales muestra EXACTAMENTE este formato:
 
 RESUMEN:
@@ -185,7 +188,6 @@ def generar_imagen_tabla():
         if len(datos) <= 1:
             return None, "No hay buques registrados."
 
-        # Columnas a mostrar: MN hasta CONTRATO
         cols_mostrar = ["MN", "ETA", "AGENCIA", "ETD", "MT VLSO", "MT HSFO", "MT MGO", "PUERTO", "HORAS OP.", "CONTRATO"]
         headers = datos[0]
         indices = [headers.index(c) for c in cols_mostrar if c in headers]
@@ -198,7 +200,15 @@ def generar_imagen_tabla():
         if not filas:
             return None, "No hay buques registrados."
 
-        # Dimensiones
+        # Escala 2x para mejor calidad
+        SCALE      = 2
+        FONT_SIZE  = 13 * SCALE
+        PAD_X      = 14 * SCALE
+        PAD_Y      = 9  * SCALE
+        ROW_H      = FONT_SIZE + PAD_Y * 2
+        MARGIN     = 24 * SCALE
+
+        # Calcular anchos de columna basado en contenido
         col_widths = []
         for ci, col in enumerate(cols_mostrar):
             max_w = len(col)
@@ -207,71 +217,73 @@ def generar_imagen_tabla():
                     max_w = max(max_w, len(str(fila[ci])))
             col_widths.append(max(max_w, 4))
 
-        FONT_SIZE  = 14
-        PAD_X      = 12
-        PAD_Y      = 8
-        ROW_H      = FONT_SIZE + PAD_Y * 2
-        COL_WIDTHS = [w * (FONT_SIZE // 2 + 2) + PAD_X * 2 for w in col_widths]
-        TABLE_W    = sum(COL_WIDTHS) + 2
-        TABLE_H    = ROW_H * (len(filas) + 1) + 2
-        MARGIN     = 20
+        COL_WIDTHS = [w * (FONT_SIZE // 2 + 1) + PAD_X * 2 for w in col_widths]
+        TABLE_W    = sum(COL_WIDTHS)
+        TITLE_H    = FONT_SIZE + MARGIN
 
         img_w = TABLE_W + MARGIN * 2
-        img_h = TABLE_H + MARGIN * 2 + 40
+        img_h = ROW_H * (len(filas) + 1) + TITLE_H + MARGIN * 2
 
-        img  = Image.new("RGB", (img_w, img_h), color=(245, 247, 250))
+        img  = Image.new("RGB", (img_w, img_h), color=(240, 243, 248))
         draw = ImageDraw.Draw(img)
 
         try:
             font       = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE)
             font_bold  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
-            font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+            font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE + 4)
         except:
             font = font_bold = font_title = ImageFont.load_default()
 
-        # Título
-        titulo = "BUQUES - CI QUALITY BUNKERS SUPPLY S.A.S"
-        draw.text((MARGIN, MARGIN), titulo, fill=(31, 56, 100), font=font_title)
+        # Fondo título
+        draw.rectangle([0, 0, img_w, TITLE_H + MARGIN // 2], fill=(31, 56, 100))
+        titulo = "CI QUALITY BUNKERS SUPPLY S.A.S  —  BUQUES"
+        draw.text((MARGIN, MARGIN // 2), titulo, fill=(255, 255, 255), font=font_title)
 
         ox = MARGIN
-        oy = MARGIN + 35
+        oy = TITLE_H + MARGIN // 2
 
-        # Encabezado
+        # Encabezados
         x = ox
         for ci, col in enumerate(cols_mostrar):
-            draw.rectangle([x, oy, x + COL_WIDTHS[ci], oy + ROW_H], fill=(31, 56, 100))
-            draw.text((x + PAD_X, oy + PAD_Y), col, fill=(255, 255, 255), font=font_bold)
+            draw.rectangle([x, oy, x + COL_WIDTHS[ci], oy + ROW_H], fill=(46, 117, 182))
+            # Centrar texto en encabezado
+            tw = draw.textlength(col, font=font_bold)
+            tx = x + (COL_WIDTHS[ci] - tw) // 2
+            draw.text((tx, oy + PAD_Y), col, fill=(255, 255, 255), font=font_bold)
             x += COL_WIDTHS[ci]
 
-        # Filas
+        # Filas de datos
         for ri, fila in enumerate(filas):
             y = oy + ROW_H * (ri + 1)
-            bg = (211, 228, 248) if ri % 2 == 0 else (255, 255, 255)
-            x = ox
+            bg = (214, 228, 247) if ri % 2 == 0 else (255, 255, 255)
+            x  = ox
             for ci in range(len(cols_mostrar)):
                 draw.rectangle([x, y, x + COL_WIDTHS[ci], y + ROW_H], fill=bg)
                 val = str(fila[ci]) if ci < len(fila) else ""
-                draw.text((x + PAD_X, y + PAD_Y), val, fill=(30, 30, 30), font=font)
+                draw.text((x + PAD_X, y + PAD_Y), val, fill=(25, 25, 25), font=font)
                 x += COL_WIDTHS[ci]
 
-        # Borde exterior
-        draw.rectangle([ox, oy, ox + TABLE_W - 1, oy + ROW_H * (len(filas) + 1)],
-                       outline=(31, 56, 100), width=2)
+        # Bordes horizontales entre filas
+        for ri in range(len(filas) + 2):
+            y = oy + ROW_H * ri
+            draw.line([(ox, y), (ox + TABLE_W, y)], fill=(180, 195, 215), width=1)
 
-        # Líneas verticales
+        # Bordes verticales
         x = ox
         for w in COL_WIDTHS:
-            draw.line([(x, oy), (x, oy + ROW_H * (len(filas) + 1))], fill=(180, 180, 180), width=1)
+            draw.line([(x, oy), (x, oy + ROW_H * (len(filas) + 1))], fill=(180, 195, 215), width=1)
             x += w
+        draw.line([(x, oy), (x, oy + ROW_H * (len(filas) + 1))], fill=(180, 195, 215), width=1)
 
-        # Pie
-        fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
-        draw.text((ox, oy + ROW_H * (len(filas) + 1) + 5),
-                  f"Generado: {fecha}  |  Total buques: {len(filas)}",
-                  fill=(120, 120, 120), font=font)
+        # Borde exterior tabla
+        draw.rectangle(
+            [ox, oy, ox + TABLE_W, oy + ROW_H * (len(filas) + 1)],
+            outline=(31, 56, 100), width=2
+        )
 
+        # Guardar con alta calidad
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        img.save(buf, format="PNG", optimize=False)
         buf.seek(0)
         return buf, None
 
