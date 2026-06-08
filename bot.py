@@ -3,6 +3,8 @@ import json
 import logging
 import httpx
 import gspread
+from PIL import Image, ImageDraw, ImageFont
+import io
 from google.oauth2.service_account import Credentials
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -175,6 +177,107 @@ def eliminar_buque(nombre):
         return False, f"Buque '{nombre}' no encontrado"
     except Exception as e:
         return False, str(e)
+
+def generar_imagen_tabla():
+    try:
+        ws    = get_sheet()
+        datos = ws.get_all_values()
+        if len(datos) <= 1:
+            return None, "No hay buques registrados."
+
+        # Columnas a mostrar: MN hasta CONTRATO
+        cols_mostrar = ["MN", "ETA", "AGENCIA", "ETD", "MT VLSO", "MT HSFO", "MT MGO", "PUERTO", "HORAS OP.", "CONTRATO"]
+        headers = datos[0]
+        indices = [headers.index(c) for c in cols_mostrar if c in headers]
+
+        filas = []
+        for row in datos[1:]:
+            if any(row):
+                filas.append([row[i] if i < len(row) else "" for i in indices])
+
+        if not filas:
+            return None, "No hay buques registrados."
+
+        # Dimensiones
+        col_widths = []
+        for ci, col in enumerate(cols_mostrar):
+            max_w = len(col)
+            for fila in filas:
+                if ci < len(fila):
+                    max_w = max(max_w, len(str(fila[ci])))
+            col_widths.append(max(max_w, 4))
+
+        FONT_SIZE  = 14
+        PAD_X      = 12
+        PAD_Y      = 8
+        ROW_H      = FONT_SIZE + PAD_Y * 2
+        COL_WIDTHS = [w * (FONT_SIZE // 2 + 2) + PAD_X * 2 for w in col_widths]
+        TABLE_W    = sum(COL_WIDTHS) + 2
+        TABLE_H    = ROW_H * (len(filas) + 1) + 2
+        MARGIN     = 20
+
+        img_w = TABLE_W + MARGIN * 2
+        img_h = TABLE_H + MARGIN * 2 + 40
+
+        img  = Image.new("RGB", (img_w, img_h), color=(245, 247, 250))
+        draw = ImageDraw.Draw(img)
+
+        try:
+            font       = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE)
+            font_bold  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
+            font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+        except:
+            font = font_bold = font_title = ImageFont.load_default()
+
+        # Título
+        titulo = "BUQUES - CI QUALITY BUNKERS SUPPLY S.A.S"
+        draw.text((MARGIN, MARGIN), titulo, fill=(31, 56, 100), font=font_title)
+
+        ox = MARGIN
+        oy = MARGIN + 35
+
+        # Encabezado
+        x = ox
+        for ci, col in enumerate(cols_mostrar):
+            draw.rectangle([x, oy, x + COL_WIDTHS[ci], oy + ROW_H], fill=(31, 56, 100))
+            draw.text((x + PAD_X, oy + PAD_Y), col, fill=(255, 255, 255), font=font_bold)
+            x += COL_WIDTHS[ci]
+
+        # Filas
+        for ri, fila in enumerate(filas):
+            y = oy + ROW_H * (ri + 1)
+            bg = (211, 228, 248) if ri % 2 == 0 else (255, 255, 255)
+            x = ox
+            for ci in range(len(cols_mostrar)):
+                draw.rectangle([x, y, x + COL_WIDTHS[ci], y + ROW_H], fill=bg)
+                val = str(fila[ci]) if ci < len(fila) else ""
+                draw.text((x + PAD_X, y + PAD_Y), val, fill=(30, 30, 30), font=font)
+                x += COL_WIDTHS[ci]
+
+        # Borde exterior
+        draw.rectangle([ox, oy, ox + TABLE_W - 1, oy + ROW_H * (len(filas) + 1)],
+                       outline=(31, 56, 100), width=2)
+
+        # Líneas verticales
+        x = ox
+        for w in COL_WIDTHS:
+            draw.line([(x, oy), (x, oy + ROW_H * (len(filas) + 1))], fill=(180, 180, 180), width=1)
+            x += w
+
+        # Pie
+        fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
+        draw.text((ox, oy + ROW_H * (len(filas) + 1) + 5),
+                  f"Generado: {fecha}  |  Total buques: {len(filas)}",
+                  fill=(120, 120, 120), font=font)
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return buf, None
+
+    except Exception as e:
+        logger.error(f"Error generando imagen: {e}")
+        return None, str(e)
 
 def resumen_registro(data):
     def v(k): return _clean(data,k) or "—"
@@ -428,7 +531,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text in ["Listar buques", "listar"]:
-        await update.message.reply_text("Use Google Sheets para ver todos los registros:\nhttps://docs.google.com/spreadsheets/d/" + SHEET_ID)
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
+        buf, error = generar_imagen_tabla()
+        if buf:
+            await update.message.reply_photo(
+                photo=buf,
+                caption=f"Buques registrados en Google Sheets\nVer: https://docs.google.com/spreadsheets/d/{SHEET_ID}"
+            )
+        else:
+            await update.message.reply_text(error or "No se pudo generar la imagen.")
         return
 
     if text in ["Limpiar sesion", "limpiar"]:
