@@ -202,9 +202,9 @@ def generar_imagen_tabla():
 
         # Escala 2x para mejor calidad
         SCALE      = 3
-        FONT_SIZE  = 28 * SCALE
-        PAD_X      = 20 * SCALE
-        PAD_Y      = 14 * SCALE
+        FONT_SIZE  = 32 * SCALE
+        PAD_X      = 22 * SCALE
+        PAD_Y      = 16 * SCALE
         ROW_H      = FONT_SIZE + PAD_Y * 2
         MARGIN     = 32 * SCALE
 
@@ -260,7 +260,7 @@ def generar_imagen_tabla():
             for ci in range(len(cols_mostrar)):
                 draw.rectangle([x, y, x + COL_WIDTHS[ci], y + ROW_H], fill=bg)
                 val = str(fila[ci]) if ci < len(fila) else ""
-                draw.text((x + PAD_X, y + PAD_Y), val, fill=(25, 25, 25), font=font)
+                draw.text((x + PAD_X, y + PAD_Y), val, fill=(25, 25, 25), font=font_bold)
                 x += COL_WIDTHS[ci]
 
         # Bordes horizontales entre filas
