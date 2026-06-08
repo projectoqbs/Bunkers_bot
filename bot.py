@@ -181,115 +181,99 @@ def eliminar_buque(nombre):
     except Exception as e:
         return False, str(e)
 
+def generar_imagen_grupo(titulo_grupo, cols_mostrar, filas_data, all_headers):
+    try:
+        indices = [all_headers.index(c) for c in cols_mostrar if c in all_headers]
+        filas   = [[row[i] if i < len(row) else "" for i in indices] for row in filas_data]
+
+        FONT_SIZE = 15
+        PAD_X     = 10
+        PAD_Y     = 6
+        ROW_H     = FONT_SIZE + PAD_Y * 2
+        TITLE_H   = 36
+        MARGIN    = 0
+
+        try:
+            font      = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE)
+            font_bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
+            font_hdr  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 13)
+        except:
+            font = font_bold = font_hdr = ImageFont.load_default()
+
+        # Calcular anchos exactos por contenido
+        tmp_img  = Image.new("RGB", (1, 1))
+        tmp_draw = ImageDraw.Draw(tmp_img)
+        COL_WIDTHS = []
+        for ci, col in enumerate(cols_mostrar):
+            max_w = tmp_draw.textlength(col, font=font_bold)
+            for fila in filas:
+                val = str(fila[ci]) if ci < len(fila) else ""
+                max_w = max(max_w, tmp_draw.textlength(val, font=font))
+            COL_WIDTHS.append(int(max_w) + PAD_X * 2)
+
+        TABLE_W = sum(COL_WIDTHS)
+        img_w   = TABLE_W
+        img_h   = TITLE_H + ROW_H * (len(filas) + 1)
+
+        img  = Image.new("RGB", (img_w, img_h), color=(255, 255, 255))
+        draw = ImageDraw.Draw(img)
+
+        # Título fondo azul oscuro
+        draw.rectangle([0, 0, img_w, TITLE_H], fill=(31, 56, 100))
+        draw.text((10, (TITLE_H - 14) // 2), titulo_grupo, fill=(255, 255, 255), font=font_bold)
+
+        oy = TITLE_H
+
+        # Encabezados — fondo gris claro, texto negro negrita, borde
+        x = 0
+        for ci, col in enumerate(cols_mostrar):
+            draw.rectangle([x, oy, x + COL_WIDTHS[ci], oy + ROW_H], fill=(217, 225, 242), outline=(180, 180, 180))
+            draw.text((x + PAD_X, oy + PAD_Y), col, fill=(0, 0, 0), font=font_bold)
+            x += COL_WIDTHS[ci]
+
+        # Filas de datos
+        for ri, fila in enumerate(filas):
+            y  = oy + ROW_H * (ri + 1)
+            bg = (242, 242, 242) if ri % 2 == 0 else (255, 255, 255)
+            x  = 0
+            for ci in range(len(cols_mostrar)):
+                draw.rectangle([x, y, x + COL_WIDTHS[ci], y + ROW_H], fill=bg, outline=(200, 200, 200))
+                val = str(fila[ci]) if ci < len(fila) else ""
+                draw.text((x + PAD_X, y + PAD_Y), val, fill=(0, 0, 0), font=font)
+                x += COL_WIDTHS[ci]
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return buf
+    except Exception as e:
+        logger.error(f"Error imagen grupo: {e}")
+        return None
+
 def generar_imagen_tabla():
     try:
         ws    = get_sheet()
         datos = ws.get_all_values()
         if len(datos) <= 1:
-            return None, "No hay buques registrados."
+            return None, None, "No hay buques registrados."
 
-        cols_mostrar = ["MN", "ETA", "AGENCIA", "ETD", "MT VLSO", "MT HSFO", "MT MGO", "PUERTO", "HORAS OP."]
         headers = datos[0]
-        indices = [headers.index(c) for c in cols_mostrar if c in headers]
+        filas_data = [row for row in datos[1:] if any(row)]
 
-        filas = []
-        for row in datos[1:]:
-            if any(row):
-                filas.append([row[i] if i < len(row) else "" for i in indices])
+        if not filas_data:
+            return None, None, "No hay buques registrados."
 
-        if not filas:
-            return None, "No hay buques registrados."
+        grupo1 = ["MN", "ETA", "AGENCIA", "ETD", "PUERTO"]
+        grupo2 = ["MN", "MT VLSO", "MT HSFO", "MT MGO", "HORAS OP."]
 
-        # Escala 2x para mejor calidad
-        SCALE      = 3
-        FONT_SIZE  = 32 * SCALE
-        PAD_X      = 22 * SCALE
-        PAD_Y      = 16 * SCALE
-        ROW_H      = FONT_SIZE + PAD_Y * 2
-        MARGIN     = 32 * SCALE
+        buf1 = generar_imagen_grupo("CI QUALITY BUNKERS  —  BUQUES (1/2)", grupo1, filas_data, headers)
+        buf2 = generar_imagen_grupo("CI QUALITY BUNKERS  —  COMBUSTIBLE (2/2)", grupo2, filas_data, headers)
 
-        # Calcular anchos de columna basado en contenido
-        col_widths = []
-        for ci, col in enumerate(cols_mostrar):
-            max_w = len(col)
-            for fila in filas:
-                if ci < len(fila):
-                    max_w = max(max_w, len(str(fila[ci])))
-            col_widths.append(max(max_w, 4))
-
-        COL_WIDTHS = [w * (FONT_SIZE // 2 + 1) + PAD_X * 2 for w in col_widths]
-        TABLE_W    = sum(COL_WIDTHS)
-        TITLE_H    = FONT_SIZE + MARGIN
-
-        img_w = TABLE_W + MARGIN * 2
-        img_h = ROW_H * (len(filas) + 1) + TITLE_H + MARGIN * 2
-
-        img  = Image.new("RGB", (img_w, img_h), color=(240, 243, 248))
-        draw = ImageDraw.Draw(img)
-
-        try:
-            font       = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE)
-            font_bold  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
-            font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE + 8)
-        except:
-            font = font_bold = font_title = ImageFont.load_default()
-
-        # Fondo título
-        draw.rectangle([0, 0, img_w, TITLE_H + MARGIN // 2], fill=(31, 56, 100))
-        titulo = "CI QUALITY BUNKERS SUPPLY S.A.S  —  BUQUES"
-        draw.text((MARGIN, MARGIN // 2), titulo, fill=(255, 255, 255), font=font_title)
-
-        ox = MARGIN
-        oy = TITLE_H + MARGIN // 2
-
-        # Encabezados
-        x = ox
-        for ci, col in enumerate(cols_mostrar):
-            draw.rectangle([x, oy, x + COL_WIDTHS[ci], oy + ROW_H], fill=(46, 117, 182))
-            # Centrar texto en encabezado
-            tw = draw.textlength(col, font=font_bold)
-            tx = x + (COL_WIDTHS[ci] - tw) // 2
-            draw.text((tx, oy + PAD_Y), col, fill=(255, 255, 255), font=font_bold)
-            x += COL_WIDTHS[ci]
-
-        # Filas de datos
-        for ri, fila in enumerate(filas):
-            y = oy + ROW_H * (ri + 1)
-            bg = (214, 228, 247) if ri % 2 == 0 else (255, 255, 255)
-            x  = ox
-            for ci in range(len(cols_mostrar)):
-                draw.rectangle([x, y, x + COL_WIDTHS[ci], y + ROW_H], fill=bg)
-                val = str(fila[ci]) if ci < len(fila) else ""
-                draw.text((x + PAD_X, y + PAD_Y), val, fill=(25, 25, 25), font=font_bold)
-                x += COL_WIDTHS[ci]
-
-        # Bordes horizontales entre filas
-        for ri in range(len(filas) + 2):
-            y = oy + ROW_H * ri
-            draw.line([(ox, y), (ox + TABLE_W, y)], fill=(180, 195, 215), width=1)
-
-        # Bordes verticales
-        x = ox
-        for w in COL_WIDTHS:
-            draw.line([(x, oy), (x, oy + ROW_H * (len(filas) + 1))], fill=(180, 195, 215), width=1)
-            x += w
-        draw.line([(x, oy), (x, oy + ROW_H * (len(filas) + 1))], fill=(180, 195, 215), width=1)
-
-        # Borde exterior tabla
-        draw.rectangle(
-            [ox, oy, ox + TABLE_W, oy + ROW_H * (len(filas) + 1)],
-            outline=(31, 56, 100), width=2
-        )
-
-        # Guardar con alta calidad
-        buf = io.BytesIO()
-        img.save(buf, format="PNG", optimize=False)
-        buf.seek(0)
-        return buf, None
+        return buf1, buf2, None
 
     except Exception as e:
-        logger.error(f"Error generando imagen: {e}")
-        return None, str(e)
+        logger.error(f"Error generando tabla: {e}")
+        return None, None, str(e)
 
 def resumen_registro(data):
     def v(k): return _clean(data,k) or "—"
@@ -544,11 +528,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text in ["Listar buques", "listar"]:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
-        buf, error = generar_imagen_tabla()
-        if buf:
-            await update.message.reply_photo(photo=buf)
+        buf1, buf2, error = generar_imagen_tabla()
+        if error:
+            await update.message.reply_text(error)
         else:
-            await update.message.reply_text(error or "No se pudo generar la imagen.")
+            if buf1: await update.message.reply_photo(photo=buf1)
+            if buf2: await update.message.reply_photo(photo=buf2)
         return
 
     if text in ["Limpiar sesion", "limpiar"]:
