@@ -39,6 +39,7 @@ CAMPO_MAP = {
     "11": ("BANDERA",   "bandera"),
     "12": ("CIUDAD",    "ciudad"),
     "13": ("ESTADO",    "estado"),
+    "14": ("MN",        "buque"),
 }
 
 SYSTEM_PROMPT = """Eres el Agente Bunkers QBS, asistente operativo de CI Quality Bunkers Supply S.A.S para gestion de suministro de combustible a buques en Colombia.
@@ -376,7 +377,8 @@ def menu_campos():
         [KeyboardButton("7. Puerto"),    KeyboardButton("8. Horas op.")],
         [KeyboardButton("9. Contrato"),  KeyboardButton("10. IMO")],
         [KeyboardButton("11. Bandera"),  KeyboardButton("12. Ciudad")],
-        [KeyboardButton("13. Estado"),   KeyboardButton("Cancelar")],
+        [KeyboardButton("13. Estado"),   KeyboardButton("14. Nombre buque")],
+        [KeyboardButton("Cancelar")],
     ], resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -461,19 +463,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ud["paso"]  = "campo"
             resumen = (
                 f"Buque: {fila.get('MN','')}\n{'─'*26}\n"
-                f"1.  ETA:       {fila.get('ETA','—')}\n"
-                f"2.  Agencia:   {fila.get('AGENCIA','—')}\n"
-                f"3.  ETD:       {fila.get('ETD','—')}\n"
-                f"4.  MT VLSO:   {fila.get('MT VLSO','—')}\n"
-                f"5.  MT HSFO:   {fila.get('MT HSFO','—')}\n"
-                f"6.  MT MGO:    {fila.get('MT MGO','—')}\n"
-                f"7.  Puerto:    {fila.get('PUERTO','—')}\n"
-                f"8.  Horas op.: {fila.get('HORAS OP.','—')}\n"
-                f"9.  Contrato:  {fila.get('CONTRATO','—')}\n"
-                f"10. IMO:       {fila.get('IMO','—')}\n"
-                f"11. Bandera:   {fila.get('BANDERA','—')}\n"
-                f"12. Ciudad:    {fila.get('CIUDAD','—')}\n"
-                f"13. Estado:    {fila.get('ESTADO','—')}\n"
+                f"1.  ETA:          {fila.get('ETA','—')}\n"
+                f"2.  Agencia:      {fila.get('AGENCIA','—')}\n"
+                f"3.  ETD:          {fila.get('ETD','—')}\n"
+                f"4.  MT VLSO:      {fila.get('MT VLSO','—')}\n"
+                f"5.  MT HSFO:      {fila.get('MT HSFO','—')}\n"
+                f"6.  MT MGO:       {fila.get('MT MGO','—')}\n"
+                f"7.  Puerto:       {fila.get('PUERTO','—')}\n"
+                f"8.  Horas op.:    {fila.get('HORAS OP.','—')}\n"
+                f"9.  Contrato:     {fila.get('CONTRATO','—')}\n"
+                f"10. IMO:          {fila.get('IMO','—')}\n"
+                f"11. Bandera:      {fila.get('BANDERA','—')}\n"
+                f"12. Ciudad:       {fila.get('CIUDAD','—')}\n"
+                f"13. Estado:       {fila.get('ESTADO','—')}\n"
+                f"14. Nombre buque: {fila.get('MN','—')}\n"
                 f"{'─'*26}\nQue campo desea editar?"
             )
             await update.message.reply_text(resumen, reply_markup=menu_campos())
