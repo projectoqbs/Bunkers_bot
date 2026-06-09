@@ -257,19 +257,72 @@ def generar_imagen_tabla():
         if len(datos) <= 1:
             return None, None, "No hay buques registrados."
 
-        headers = datos[0]
+        headers    = datos[0]
         filas_data = [row for row in datos[1:] if any(row)]
-
         if not filas_data:
             return None, None, "No hay buques registrados."
 
-        grupo1 = ["MN", "ETA", "AGENCIA", "ETD", "PUERTO"]
-        grupo2 = ["MN", "MT VLSO", "MT HSFO", "MT MGO", "HORAS OP."]
+        cols_mostrar = ["MN", "ETA", "AGENCIA", "ETD", "MT VLSO", "MT HSFO", "MT MGO", "PUERTO", "HORAS OP."]
+        indices = [headers.index(c) for c in cols_mostrar if c in headers]
+        filas   = [[row[i] if i < len(row) else "" for i in indices] for row in filas_data]
 
-        buf1 = generar_imagen_grupo("CI QUALITY BUNKERS  —  BUQUES (1/2)", grupo1, filas_data, headers)
-        buf2 = generar_imagen_grupo("CI QUALITY BUNKERS  —  COMBUSTIBLE (2/2)", grupo2, filas_data, headers)
+        FONT_SIZE = 15
+        PAD_X     = 10
+        PAD_Y     = 6
+        ROW_H     = FONT_SIZE + PAD_Y * 2
+        TITLE_H   = 36
 
-        return buf1, buf2, None
+        try:
+            font      = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE)
+            font_bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
+        except:
+            font = font_bold = ImageFont.load_default()
+
+        # Calcular anchos exactos por contenido
+        tmp  = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+        COL_WIDTHS = []
+        for ci, col in enumerate(cols_mostrar):
+            max_w = tmp.textlength(col, font=font_bold)
+            for fila in filas:
+                val   = str(fila[ci]) if ci < len(fila) else ""
+                max_w = max(max_w, tmp.textlength(val, font=font))
+            COL_WIDTHS.append(int(max_w) + PAD_X * 2)
+
+        TABLE_W = sum(COL_WIDTHS)
+        img_w   = TABLE_W
+        img_h   = TITLE_H + ROW_H * (len(filas) + 1)
+
+        img  = Image.new("RGB", (img_w, img_h), color=(255, 255, 255))
+        draw = ImageDraw.Draw(img)
+
+        # Título
+        draw.rectangle([0, 0, img_w, TITLE_H], fill=(31, 56, 100))
+        draw.text((10, (TITLE_H - FONT_SIZE) // 2), "CI QUALITY BUNKERS SUPPLY S.A.S  —  BUQUES", fill=(255, 255, 255), font=font_bold)
+
+        oy = TITLE_H
+
+        # Encabezados
+        x = 0
+        for ci, col in enumerate(cols_mostrar):
+            draw.rectangle([x, oy, x + COL_WIDTHS[ci], oy + ROW_H], fill=(217, 225, 242), outline=(180, 180, 180))
+            draw.text((x + PAD_X, oy + PAD_Y), col, fill=(0, 0, 0), font=font_bold)
+            x += COL_WIDTHS[ci]
+
+        # Filas
+        for ri, fila in enumerate(filas):
+            y  = oy + ROW_H * (ri + 1)
+            bg = (242, 242, 242) if ri % 2 == 0 else (255, 255, 255)
+            x  = 0
+            for ci in range(len(cols_mostrar)):
+                draw.rectangle([x, y, x + COL_WIDTHS[ci], y + ROW_H], fill=bg, outline=(200, 200, 200))
+                val = str(fila[ci]) if ci < len(fila) else ""
+                draw.text((x + PAD_X, y + PAD_Y), val, fill=(0, 0, 0), font=font)
+                x += COL_WIDTHS[ci]
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return buf, None, None
 
     except Exception as e:
         logger.error(f"Error generando tabla: {e}")
@@ -528,12 +581,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text in ["Listar buques", "listar"]:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
-        buf1, buf2, error = generar_imagen_tabla()
+        buf, _, error = generar_imagen_tabla()
         if error:
             await update.message.reply_text(error)
         else:
-            if buf1: await update.message.reply_photo(photo=buf1)
-            if buf2: await update.message.reply_photo(photo=buf2)
+            await update.message.reply_photo(photo=buf)
         return
 
     if text in ["Limpiar sesion", "limpiar"]:
