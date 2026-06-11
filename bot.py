@@ -16,7 +16,7 @@ BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
 
 sys.path.insert(0, BASE_DIR)
 try:
-    from generar_docs import generar_documentos
+    from generar_docs import generar_documentos, generar_pdf_carta
     DOCS_DISPONIBLES = True
 except Exception as e:
     logger.warning(f"generar_docs no disponible: {e}")
@@ -235,7 +235,63 @@ def generar_imagen_tabla():
         logger.error(f"Error imagen: {e}")
         return None,None,str(e)
 
-async def call_groq(history,system):
+def generar_imagen_estado():
+    try:
+        ws    = get_sheet()
+        datos = ws.get_all_values()
+        if len(datos)<=1: return None,"No hay buques registrados."
+        headers    = datos[0]
+        filas_data = [row for row in datos[1:] if any(row)]
+        if not filas_data: return None,"No hay buques registrados."
+        cols_mostrar = ["MN","CONTRATO","IMO","BANDERA","CIUDAD","ESTADO"]
+        indices = [headers.index(c) for c in cols_mostrar if c in headers]
+        filas   = [[row[i] if i<len(row) else "" for i in indices] for row in filas_data]
+        FONT_SIZE=15; PAD_X=10; PAD_Y=6; ROW_H=FONT_SIZE+PAD_Y*2; TITLE_H=36
+        try:
+            font      = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",FONT_SIZE)
+            font_bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",FONT_SIZE)
+        except:
+            font=font_bold=ImageFont.load_default()
+        tmp=ImageDraw.Draw(Image.new("RGB",(1,1)))
+        COL_WIDTHS=[]
+        for ci,col in enumerate(cols_mostrar):
+            max_w=tmp.textlength(col,font=font_bold)
+            for fila in filas:
+                val=str(fila[ci]) if ci<len(fila) else ""
+                max_w=max(max_w,tmp.textlength(val,font=font))
+            COL_WIDTHS.append(int(max_w)+PAD_X*2)
+        TABLE_W=sum(COL_WIDTHS)
+        img=Image.new("RGB",(TABLE_W,TITLE_H+ROW_H*(len(filas)+1)),color=(255,255,255))
+        draw=ImageDraw.Draw(img)
+        draw.rectangle([0,0,TABLE_W,TITLE_H],fill=(31,56,100))
+        draw.text((10,(TITLE_H-FONT_SIZE)//2),"CI QUALITY BUNKERS  —  ESTADO SOLICITUDES",fill=(255,255,255),font=font_bold)
+        oy=TITLE_H; x=0
+        for ci,col in enumerate(cols_mostrar):
+            draw.rectangle([x,oy,x+COL_WIDTHS[ci],oy+ROW_H],fill=(217,225,242),outline=(180,180,180))
+            draw.text((x+PAD_X,oy+PAD_Y),col,fill=(0,0,0),font=font_bold)
+            x+=COL_WIDTHS[ci]
+        for ri,fila in enumerate(filas):
+            y=oy+ROW_H*(ri+1); bg=(242,242,242) if ri%2==0 else (255,255,255); x=0
+            for ci in range(len(cols_mostrar)):
+                val=str(fila[ci]) if ci<len(fila) else ""
+                # Color especial para estado
+                cell_bg=bg
+                if col_name_at(cols_mostrar,ci)=="ESTADO":
+                    if val.upper()=="ENVIADO": cell_bg=(198,239,206)
+                    elif val.upper()=="PENDIENTE": cell_bg=(255,235,156)
+                draw.rectangle([x,y,x+COL_WIDTHS[ci],y+ROW_H],fill=cell_bg,outline=(200,200,200))
+                draw.text((x+PAD_X,y+PAD_Y),val,fill=(0,0,0),font=font)
+                x+=COL_WIDTHS[ci]
+        buf=io.BytesIO(); img.save(buf,format="PNG"); buf.seek(0)
+        return buf,None
+    except Exception as e:
+        logger.error(f"Error imagen estado: {e}")
+        return None,str(e)
+
+def col_name_at(cols,idx):
+    return cols[idx] if idx<len(cols) else ""
+
+
     messages=[{"role":"system","content":system}]+[{"role":m["role"],"content":m["content"]} for m in history]
     async with httpx.AsyncClient(timeout=30) as client:
         resp=await client.post(
@@ -252,6 +308,18 @@ def menu():
         [KeyboardButton("Nuevo buque"),      KeyboardButton("Listar buques")],
         [KeyboardButton("Editar registro"),  KeyboardButton("Eliminar buque")],
         [KeyboardButton("Generar documentos"),KeyboardButton("Ayuda")],
+    ],resize_keyboard=True)
+
+def menu_listar():
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("BUQUES"),           KeyboardButton("ESTADO SOLICITUD")],
+        [KeyboardButton("Cancelar")],
+    ],resize_keyboard=True)
+
+def menu_gendocs():
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("DIMAR"),            KeyboardButton("CARTA CAPITANIA")],
+        [KeyboardButton("Cancelar")],
     ],resize_keyboard=True)
 
 def menu_campos():
@@ -363,7 +431,8 @@ async def handle_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"No encontre '{text}'. Verifique o escriba Cancelar.")
                 return
             ud["buque_data"]=fila; ud["paso"]="confirmar"
-            resumen=(f"Generar documentos para:\n{'─'*26}\n"
+            tipo_doc=ud.get("tipo_doc","DIMAR")
+            resumen=(f"Generar {tipo_doc} para:\n{'─'*26}\n"
                      f"Buque:   {fila.get('MN','')}\n"
                      f"IMO:     {fila.get('IMO','—')}\n"
                      f"Bandera: {fila.get('BANDERA','—')}\n"
@@ -373,14 +442,16 @@ async def handle_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                      f"MT HSFO: {fila.get('MT HSFO','—')}\n"
                      f"MT MGO:  {fila.get('MT MGO','—')}\n"
                      f"Agencia: {fila.get('AGENCIA','—')}\n{'─'*26}\n"
-                     f"Fecha suministro: ETA + 5 dias\nConfirma generacion?")
+                     f"Fecha suministro: ETA + 5 dias\nConfirma?")
             await update.message.reply_text(resumen,reply_markup=ReplyKeyboardMarkup(
                 [[KeyboardButton("SI GENERAR"),KeyboardButton("Cancelar")]],resize_keyboard=True,one_time_keyboard=True))
             return
         if paso=="confirmar":
             if text.upper() in ["SI GENERAR","SI","SÍ","CONFIRMAR","OK"]:
-                fila=ud["buque_data"]; ud.clear()
-                await update.message.reply_text("Generando documentos Word...")
+                fila=ud["buque_data"]
+                tipo_doc=ud.get("tipo_doc","DIMAR")
+                ud.clear()
+                await update.message.reply_text(f"Generando {tipo_doc}...")
                 await context.bot.send_chat_action(chat_id=update.effective_chat.id,action="upload_document")
                 try:
                     buque_data={
@@ -395,17 +466,23 @@ async def handle_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                         "puerto":  fila.get("PUERTO",""),
                     }
                     output_dir=os.path.join(BASE_DIR,"docs_generados")
-                    doc1,doc2=generar_documentos(buque_data,output_dir,BASE_DIR)
-                    with open(doc1,"rb") as f:
-                        await update.message.reply_document(document=f,filename=os.path.basename(doc1))
-                    with open(doc2,"rb") as f:
-                        await update.message.reply_document(document=f,filename=os.path.basename(doc2))
-                    await update.message.reply_text(
-                        f"Documentos generados para {buque_data['buque']}\nListos para enviar a DIMAR.",
-                        reply_markup=menu())
+                    if tipo_doc=="DIMAR":
+                        doc1,doc2=generar_documentos(buque_data,output_dir,BASE_DIR)
+                        with open(doc1,"rb") as f:
+                            await update.message.reply_document(document=f,filename=os.path.basename(doc1))
+                        with open(doc2,"rb") as f:
+                            await update.message.reply_document(document=f,filename=os.path.basename(doc2))
+                        await update.message.reply_text(
+                            f"Documentos DIMAR generados para {buque_data['buque']}",reply_markup=menu())
+                    else:  # CARTA CAPITANIA
+                        pdf_path=generar_pdf_carta(buque_data,output_dir,BASE_DIR)
+                        with open(pdf_path,"rb") as f:
+                            await update.message.reply_document(document=f,filename=os.path.basename(pdf_path))
+                        await update.message.reply_text(
+                            f"Carta Capitania generada para {buque_data['buque']}",reply_markup=menu())
                 except Exception as e:
                     logger.error(f"Error generando docs: {e}")
-                    await update.message.reply_text(f"Error generando documentos: {e}",reply_markup=menu())
+                    await update.message.reply_text(f"Error: {e}",reply_markup=menu())
             else:
                 ud.clear()
                 await update.message.reply_text("Cancelado.",reply_markup=menu())
@@ -430,15 +507,34 @@ async def handle_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
         if not DOCS_DISPONIBLES:
             await update.message.reply_text("Modulo de documentos no disponible.")
             return
-        ud.clear(); ud["modo"]="gendocs"; ud["paso"]="buque"
-        await update.message.reply_text("Escriba el nombre exacto del buque para generar los documentos:",
+        await update.message.reply_text("Seleccione el tipo de documento:",reply_markup=menu_gendocs())
+        return
+
+    if text in ["DIMAR","CARTA CAPITANIA"] and modo!="gendocs":
+        if not DOCS_DISPONIBLES:
+            await update.message.reply_text("Modulo de documentos no disponible.")
+            return
+        ud.clear(); ud["modo"]="gendocs"; ud["paso"]="buque"; ud["tipo_doc"]=text
+        await update.message.reply_text(
+            f"Generar: {text}\n\nEscriba el nombre exacto del buque:",
             reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Cancelar")]],resize_keyboard=True))
         return
     if text in ["Listar buques","listar"]:
+        await update.message.reply_text("Seleccione una opcion:",reply_markup=menu_listar())
+        return
+
+    if text=="BUQUES":
         await context.bot.send_chat_action(chat_id=update.effective_chat.id,action="upload_photo")
         buf,_,error=generar_imagen_tabla()
-        if error: await update.message.reply_text(error)
-        else: await update.message.reply_photo(photo=buf)
+        if error: await update.message.reply_text(error,reply_markup=menu())
+        else: await update.message.reply_photo(photo=buf,reply_markup=menu())
+        return
+
+    if text=="ESTADO SOLICITUD":
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id,action="upload_photo")
+        buf,error=generar_imagen_estado()
+        if error: await update.message.reply_text(error,reply_markup=menu())
+        else: await update.message.reply_photo(photo=buf,reply_markup=menu())
         return
     if text in ["Ayuda","ayuda"]:
         await update.message.reply_text(
