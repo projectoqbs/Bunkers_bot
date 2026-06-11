@@ -291,7 +291,7 @@ def generar_imagen_estado():
 def col_name_at(cols,idx):
     return cols[idx] if idx<len(cols) else ""
 
-
+async def call_groq(history,system):
     messages=[{"role":"system","content":system}]+[{"role":m["role"],"content":m["content"]} for m in history]
     async with httpx.AsyncClient(timeout=30) as client:
         resp=await client.post(
